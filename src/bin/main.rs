@@ -67,29 +67,30 @@ fn distribute_compression(file_list: HashSet<String>) -> Result<(), MainError> {
 
 
     // Fetch worker list from GitHub
-    let worker_list_url = "https://raw.githubusercontent.com/potato-tf/deploy/main/serverlist.json";
-    let response = reqwest::blocking::get(worker_list_url)?.text()?;
+    // let worker_list_url = "https://raw.githubusercontent.com/potato-tf/deploy/main/serverlist.json";
+    // let response = reqwest::blocking::get(worker_list_url)?.text()?;
 
-    let server_data: serde_json::Value = serde_json::from_str(&response)
-        .expect("Failed to parse JSON");
+    // let server_data: serde_json::Value = serde_json::from_str(&response)
+    //     .expect("Failed to parse JSON");
 
-    let mut worker_hosts = Vec::new();
-    if let Some(servers) = server_data["servers"].as_array() {
-        for server in servers {
-            if let Some(server_str) = server.as_str() {
-                // Parse "port user@host" format and extract just the host
-                let parts: Vec<&str> = server_str.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    let user_host = parts[1];
-                    if let Some(host) = user_host.split('@').nth(1) {
-                        worker_hosts.push(host.to_string());
-                    }
-                }
-            }
-        }
-    }
-    println!("Found {} worker hosts: {:?}", worker_hosts.len(), worker_hosts);
-    info!("Found {} worker hosts: {:?}", worker_hosts.len(), worker_hosts);
+    // let mut worker_hosts = Vec::new();
+    // if let Some(servers) = server_data["servers"].as_array() {
+    //     for server in servers {
+    //         if let Some(server_str) = server.as_str() {
+    //             // Parse "port user@host" format and extract just the host
+    //             let parts: Vec<&str> = server_str.split_whitespace().collect();
+    //             if parts.len() >= 2 {
+    //                 let user_host = parts[1];
+    //                 if let Some(host) = user_host.split('@').nth(1) {
+    //                     worker_hosts.push(host.to_string());
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+    let worker_hosts = vec!["127.0.0.1"];
+    // println!("Found {} worker hosts: {:?}", worker_hosts.len(), worker_hosts);
+    // info!("Found {} worker hosts: {:?}", worker_hosts.len(), worker_hosts);
 
     let sender = context.socket(zmq::PUSH).unwrap();
     sender.connect(&format!("tcp://*:{}", push_socket));
@@ -97,14 +98,7 @@ fn distribute_compression(file_list: HashSet<String>) -> Result<(), MainError> {
     let receiver = context.socket(zmq::PULL).unwrap();
     receiver.connect(&format!("tcp://*:{}", pull_socket));
 
-    thread::spawn (move || {
-        loop {
-            let msg = receiver.recv_string(0).unwrap().unwrap();
-            println!("Completed compression for {}", msg)
-        }
-    });
-
-    for file in file_list {
+    for file in file_list.iter() {
         println!("Sending compression job for {}", file);
         info!("Sending compression job for {}", file);
         let job = serde_json::json!({
@@ -112,6 +106,18 @@ fn distribute_compression(file_list: HashSet<String>) -> Result<(), MainError> {
             "output": format!("{}.xz", file)
         });
         sender.send(&job.to_string(), 0).unwrap();
+    }
+
+    let mut completed_jobs = 0;
+
+    println!("Waiting for {} jobs to complete", file_list.len());
+    info!("Waiting for {} jobs to complete", file_list.len());
+
+    while completed_jobs < file_list.len() {
+        let msg = receiver.recv_string(0).unwrap().unwrap();
+        completed_jobs += 1;
+        println!("Completed compression for {}", msg);
+        info!("Completed compression for {}", msg);
     }
 
     Ok(())
